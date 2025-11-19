@@ -1,9 +1,11 @@
 //! Data structures and task definitions
 
+pub mod maze;
 pub mod tasks;
 
 use ndarray::Array2;
 
+pub use maze::{Cell, Direction, Maze, MazeTask};
 pub use tasks::{CopyTask, SequenceTask};
 
 /// Trait for problem definitions
