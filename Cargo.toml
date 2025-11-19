@@ -1,0 +1,59 @@
+[package]
+name = "train-trm"
+version = "0.1.0"
+edition = "2021"
+authors = ["train-trm contributors"]
+description = "Tiny Recursive Model (TRM) implementation in Rust with CLI and Web UI"
+license = "MIT"
+repository = "https://github.com/softwarewrighter/train-trm"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "train-trm"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Tensor operations
+ndarray = { version = "0.15", features = ["serde", "approx"] }
+ndarray-rand = "0.14"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Random number generation
+rand = "0.8"
+
+# Error handling
+thiserror = "1.0"
+
+# Web UI (optional)
+yew = { version = "0.21", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+web-sys = { version = "0.3", optional = true }
+
+[dev-dependencies]
+# Float comparisons in tests (must match ndarray's approx version)
+approx = "0.4"
+
+# WASM testing
+wasm-bindgen-test = { version = "0.3" }
+
+[features]
+default = []
+web = ["yew", "wasm-bindgen", "web-sys"]
+
+[profile.release]
+# Optimize for size in WASM builds
+opt-level = "z"
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true
