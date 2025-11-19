@@ -3,6 +3,9 @@
 use super::network::{ActivationType, Layer, Network};
 use ndarray::{Array2, Axis};
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::path::Path;
 
 /// Configuration for TRM model
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +185,26 @@ impl TRMModel {
     /// Get total number of parameters
     pub fn num_parameters(&self) -> usize {
         self.network.num_parameters()
+    }
+
+    /// Save model to a file
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), Box<dyn std::error::Error>> {
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+        let json = serde_json::to_string_pretty(self)?;
+        writer.write_all(json.as_bytes())?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    /// Load model from a file
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+        let file = File::open(path)?;
+        let mut reader = BufReader::new(file);
+        let mut json = String::new();
+        reader.read_to_string(&mut json)?;
+        let model: TRMModel = serde_json::from_str(&json)?;
+        Ok(model)
     }
 }
 
