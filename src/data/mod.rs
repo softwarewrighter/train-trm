@@ -1,6 +1,10 @@
 //! Data structures and task definitions
 
+pub mod tasks;
+
 use ndarray::Array2;
+
+pub use tasks::{CopyTask, SequenceTask};
 
 /// Trait for problem definitions
 pub trait Problem {
