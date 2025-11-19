@@ -128,18 +128,76 @@ fn main() {
             println!("Final train loss: {:.6}", metrics.final_loss);
             println!("Final validation loss: {:.6}\n", final_val_loss);
 
-            println!("Model would be saved to: {}", output);
-            println!("(Serialization not yet implemented in MVP)");
+            // Save the trained model
+            println!("Saving model to: {}", output);
+            match trainer.model().save(&output) {
+                Ok(_) => println!("Model saved successfully!"),
+                Err(e) => {
+                    eprintln!("Error saving model: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Eval { model, input } => {
-            println!("Evaluating model: {}", model);
-            if let Some(input_path) = input {
-                println!("  Input: {}", input_path);
-            }
+            println!("=== Evaluating Model ===\n");
 
-            // TODO: Implement evaluation
-            eprintln!("Evaluation not yet implemented");
-            std::process::exit(1);
+            // Load the model
+            println!("Loading model from: {}", model);
+            let loaded_model = match TRMModel::load(&model) {
+                Ok(m) => {
+                    println!("Model loaded successfully!\n");
+                    m
+                }
+                Err(e) => {
+                    eprintln!("Error loading model: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            // Display model information
+            println!("Model configuration:");
+            println!("  Input dim: {}", loaded_model.config.input_dim);
+            println!("  Output dim: {}", loaded_model.config.output_dim);
+            println!("  Hidden dim: {}", loaded_model.config.hidden_dim);
+            println!("  Latent dim: {}", loaded_model.config.latent_dim);
+            println!("  Layers: {}", loaded_model.config.l_layers);
+            println!("  H-cycles: {}", loaded_model.config.h_cycles);
+            println!("  L-cycles: {}", loaded_model.config.l_cycles);
+            println!("  Parameters: {}\n", loaded_model.num_parameters());
+
+            if let Some(input_path) = input {
+                println!("Input file evaluation: {}", input_path);
+                println!("(Custom input evaluation not yet implemented)");
+            } else {
+                // Run a simple test with the copy task
+                println!("Running validation test with copy task...");
+                let task = CopyTask::new(20, loaded_model.config.input_dim);
+                let examples = task.examples();
+
+                let mut total_loss = 0.0;
+                let mut correct = 0;
+
+                for example in examples {
+                    let prediction = loaded_model.forward(&example.input);
+
+                    // Compute MSE loss
+                    let diff = &prediction - &example.target;
+                    let loss = diff.mapv(|x| x * x).sum() / (prediction.len() as f32);
+                    total_loss += loss;
+
+                    // Check if prediction is close to target (within threshold)
+                    let max_diff = diff.mapv(|x| x.abs()).iter().cloned().fold(0.0f32, f32::max);
+                    if max_diff < 0.5 {
+                        correct += 1;
+                    }
+                }
+
+                let avg_loss = total_loss / examples.len() as f32;
+                let accuracy = (correct as f32 / examples.len() as f32) * 100.0;
+
+                println!("  Average loss: {:.6}", avg_loss);
+                println!("  Accuracy: {}/{} ({:.2}%)", correct, examples.len(), accuracy);
+            }
         }
     }
 }
