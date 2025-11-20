@@ -143,7 +143,7 @@ fn main() {
 
             // Load the model
             println!("Loading model from: {}", model);
-            let loaded_model = match TRMModel::load(&model) {
+            let mut loaded_model = match TRMModel::load(&model) {
                 Ok(m) => {
                     println!("Model loaded successfully!\n");
                     m
@@ -186,7 +186,11 @@ fn main() {
                     total_loss += loss;
 
                     // Check if prediction is close to target (within threshold)
-                    let max_diff = diff.mapv(|x| x.abs()).iter().cloned().fold(0.0f32, f32::max);
+                    let max_diff = diff
+                        .mapv(|x| x.abs())
+                        .iter()
+                        .cloned()
+                        .fold(0.0f32, f32::max);
                     if max_diff < 0.5 {
                         correct += 1;
                     }
@@ -196,7 +200,12 @@ fn main() {
                 let accuracy = (correct as f32 / examples.len() as f32) * 100.0;
 
                 println!("  Average loss: {:.6}", avg_loss);
-                println!("  Accuracy: {}/{} ({:.2}%)", correct, examples.len(), accuracy);
+                println!(
+                    "  Accuracy: {}/{} ({:.2}%)",
+                    correct,
+                    examples.len(),
+                    accuracy
+                );
             }
         }
     }

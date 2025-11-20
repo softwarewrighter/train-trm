@@ -1,0 +1,16 @@
+[build]
+target = "index.html"
+dist = "dist"
+public_url = "/"
+
+[watch]
+ignore = ["dist", "target"]
+
+[serve]
+port = 1421
+address = "127.0.0.1"
+
+[[hooks]]
+stage = "build"
+command = "sh"
+command_arguments = ["-c", "echo 'Building with web feature...'"]

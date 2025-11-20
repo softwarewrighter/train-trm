@@ -94,7 +94,7 @@ impl TRMModel {
     }
 
     /// Think step: update latent state z given input x, current answer y, and previous z
-    fn think(&self, x: &Array2<f32>, y: &Array2<f32>, z: &Array2<f32>) -> Array2<f32> {
+    fn think(&mut self, x: &Array2<f32>, y: &Array2<f32>, z: &Array2<f32>) -> Array2<f32> {
         // Concatenate [x, y, z] and pad to network input size
         let batch_size = x.shape()[0];
         let think_input_dim =
@@ -130,7 +130,7 @@ impl TRMModel {
     }
 
     /// Act step: update answer y given current y and latent state z
-    fn act(&self, y: &Array2<f32>, z: &Array2<f32>) -> Array2<f32> {
+    fn act(&mut self, y: &Array2<f32>, z: &Array2<f32>) -> Array2<f32> {
         // Concatenate [y, z] and pad to network input size
         let batch_size = y.shape()[0];
         let think_input_dim =
@@ -161,7 +161,7 @@ impl TRMModel {
     }
 
     /// Forward pass: recursive reasoning
-    pub fn forward(&self, x: &Array2<f32>) -> Array2<f32> {
+    pub fn forward(&mut self, x: &Array2<f32>) -> Array2<f32> {
         let batch_size = x.shape()[0];
 
         // Initialize latent state z and answer y
@@ -180,6 +180,28 @@ impl TRMModel {
         }
 
         y
+    }
+
+    /// Backward pass and weight update
+    pub fn backward_and_update(&mut self, grad_output: &Array2<f32>, learning_rate: f32) {
+        // For now, we'll do a simplified backward pass
+        // A full implementation would need to backpropagate through all think/act cycles
+        // For MVP, we'll just update based on the final output gradient
+
+        // Pad the gradient to match network output size
+        let batch_size = grad_output.shape()[0];
+        let network_output_dim = self.config.latent_dim.max(self.config.output_dim);
+        let mut padded_grad = Array2::zeros((batch_size, network_output_dim));
+
+        // Copy gradient for the output dimensions
+        for i in 0..batch_size {
+            for j in 0..self.config.output_dim {
+                padded_grad[[i, j]] = grad_output[[i, j]];
+            }
+        }
+
+        self.network
+            .backward_and_update(&padded_grad, learning_rate);
     }
 
     /// Get total number of parameters
@@ -241,7 +263,7 @@ mod tests {
             l_cycles: 2,
         };
 
-        let model = TRMModel::new(config);
+        let mut model = TRMModel::new(config);
         let batch_size = 2;
         let input = Array2::zeros((batch_size, 5));
 
@@ -253,7 +275,7 @@ mod tests {
     #[test]
     fn test_trm_forward_runs() {
         let config = TRMConfig::default();
-        let model = TRMModel::new(config);
+        let mut model = TRMModel::new(config);
 
         let input = Array2::ones((1, 10));
         let output = model.forward(&input);
@@ -265,7 +287,7 @@ mod tests {
     #[test]
     fn test_trm_deterministic() {
         let config = TRMConfig::default();
-        let model = TRMModel::new(config);
+        let mut model = TRMModel::new(config);
 
         let input = Array2::ones((1, 10));
         let output1 = model.forward(&input);
@@ -287,7 +309,7 @@ mod tests {
             l_cycles: 1,
         };
 
-        let model = TRMModel::new(config);
+        let mut model = TRMModel::new(config);
         let batch_size = 3;
         let input = Array2::ones((batch_size, 4));
 

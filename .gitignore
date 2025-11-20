@@ -6,6 +6,7 @@ Cargo.lock
 *.wasm
 /dist/
 /pkg/
+.trunk/
 
 # IDE
 .idea/
@@ -31,4 +32,21 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Generated files
 maze_*.svg
+
+# Trained models (keep only example/demo models if needed)
+*.trm
+!examples/*.trm
+
+# Node.js / NPM
+node_modules/
+package-lock.json
+
+# Test artifacts
+test*.png
+test*.js
+ui-*.png
+.playwright-mcp/
+.mcp.json

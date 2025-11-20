@@ -14,6 +14,11 @@ crate-type = ["cdylib", "rlib"]
 name = "train-trm"
 path = "src/main.rs"
 
+[[bin]]
+name = "web"
+path = "src/bin/web.rs"
+required-features = ["web"]
+
 [dependencies]
 # CLI
 clap = { version = "4.4", features = ["derive"] }
@@ -33,9 +38,17 @@ rand = "0.8"
 thiserror = "1.0"
 
 # Web UI (optional)
-yew = { version = "0.21", optional = true }
+yew = { version = "0.21", features = ["csr"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
-web-sys = { version = "0.3", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlElement", "HtmlCanvasElement", "CanvasRenderingContext2d"], optional = true }
+gloo-timers = { version = "0.3", features = ["futures"], optional = true }
+js-sys = { version = "0.3", optional = true }
+wasm-logger = { version = "0.2", optional = true }
+
+[build-dependencies]
+chrono = "0.4"
+hostname = "0.4"
 
 [dev-dependencies]
 # Float comparisons in tests (must match ndarray's approx version)
@@ -46,7 +59,7 @@ wasm-bindgen-test = { version = "0.3" }
 
 [features]
 default = []
-web = ["yew", "wasm-bindgen", "web-sys"]
+web = ["yew", "wasm-bindgen", "wasm-bindgen-futures", "web-sys", "gloo-timers", "js-sys", "wasm-logger"]
 
 [profile.release]
 # Optimize for size in WASM builds

@@ -95,19 +95,19 @@ impl Trainer {
             let loss = compute_loss(&prediction, &example.target, self.config.loss_type);
             total_loss += loss;
 
-            // Note: Backward pass and weight update would go here
-            // For MVP, we skip actual gradient computation
-            // A full implementation would require:
-            // 1. Compute gradients through recursive layers
-            // 2. Backpropagate through think/act cycles
-            // 3. Update network weights
+            // Backward pass: compute gradient of loss with respect to output
+            let grad_output = mse_gradient(&prediction, &example.target);
+
+            // Backpropagate and update weights
+            self.model
+                .backward_and_update(&grad_output, self.config.learning_rate);
         }
 
         total_loss / examples.len() as f32
     }
 
     /// Evaluate model on examples
-    pub fn evaluate(&self, examples: &[TrainingExample]) -> f32 {
+    pub fn evaluate(&mut self, examples: &[TrainingExample]) -> f32 {
         let mut total_loss = 0.0;
 
         for example in examples {
@@ -122,6 +122,11 @@ impl Trainer {
     /// Get reference to the model
     pub fn model(&self) -> &TRMModel {
         &self.model
+    }
+
+    /// Get mutable reference to the model
+    pub fn model_mut(&mut self) -> &mut TRMModel {
+        &mut self.model
     }
 }
 
@@ -166,7 +171,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = Trainer::new(model, train_config);
+        let mut trainer = Trainer::new(model, train_config);
 
         // Create a simple task
         let task = CopyTask::new(5, 5);

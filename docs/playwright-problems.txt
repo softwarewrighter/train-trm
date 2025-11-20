@@ -1,0 +1,614 @@
+Skip to content
+Chat history
+
+You said:
+I have been using Claude Code (CLI) daily to develop web-based UIs using MCP/Playwright to operate the browser, take screen captures, diagnose console logs, etc.  Every once in a while, the workflow breaks.  The symptom is that Claude attempts to use the browser as before but instead of seeing the app it opens an empty tab, repeats, until there are many empty tabs and no progress can be made.  Killing the window doesn't help and I end up with multiple Chrome windows that appear to show the same set of tabs.  I really do not want to kill my Chrome tabs (which are generally in a separate process from the test browser that Playwright uses.  What is the root cause of this behavior?  How can we avoid it?  How can Claude (or any other MCP tool using AI Coding Agent) recover from this empty tab loop?  Research this online.  Give a detailed response, suggestions, best practices, and instructions I can give to Claude Code AI coding agent.
+ChatGPT said:
+
+Thought for 1m 27s
+Short version: this is not you doing something obviously wrong. You’ve run into a combination of:
+
+quirks/bugs in the Playwright MCP + Bridge extension
+
+Claude sometimes misusing the Playwright tools (especially tab handling)
+
+and the way Chrome profiles / sessions are reused
+
+All three together produce the “infinite empty/blank tabs” behavior.
+
+Below I’ll walk through:
+
+What’s actually running under the hood (architecture)
+
+Probable root causes of the empty-tab loop (with evidence)
+
+How to avoid it with a more robust setup
+
+A practical recovery playbook that doesn’t nuke your main Chrome
+
+Concrete text you can paste into CLAUDE.md / instructions for Claude
+
+1. What’s really going on: architecture in practice
+Your workflow roughly looks like this:
+
+Claude Code CLI
+
+Talks to an MCP server: @playwright/mcp.
+
+Issues tools like browser_tab_new, browser_navigate, browser_click, browser_snapshot, etc. 
+GitHub
++1
+
+Playwright MCP server (@playwright/mcp)
+
+Either:
+
+Starts its own browser (Chromium/Chrome/WebKit), or
+
+Connects to an existing Chrome/Edge via the Playwright MCP Bridge extension (the --extension mode). 
+GitHub
++1
+
+It manages “pages” (tabs) within a browser context and exposes tab management tools (browser_tab_new, browser_tab_list, browser_close, etc.). If browser_tab_new is called without a URL, it creates a blank tab by design. 
+OpenTools
+
+Chrome / Edge
+
+Either a Playwright-managed instance with its own user-data-dir,
+
+Or your normal Chrome profile (if you’re using the MCP Bridge extension to “attach” to it). 
+GitHub
++1
+
+When everything is happy:
+
+Claude calls browser_tab_new or browser_navigate with a URL.
+
+Playwright opens a tab to your app.
+
+Claude inspects, clicks, types, takes snapshots, etc.
+
+When things go sideways, it’s usually because:
+
+the only visible tab to Playwright is either:
+
+a blank tab, or
+
+the extension’s connect.html/status.html tab, not your app 
+GitHub
++1
+
+Claude keeps trying to operate on that tab, fails, and opens more blank tabs trying to “recover”.
+
+2. Likely root causes of the “many empty tabs” behavior
+Based on the public issues, docs, and your symptoms, there are a few strong candidates that probably combine in your case:
+
+2.1. Known issue: tabs accumulating when using the MCP Bridge extension
+There is an open/closed GitHub issue where using the Playwright MCP Bridge with Claude Code results in tabs accumulating, and closing via Playwright doesn’t actually close the real browser tab. Each new attempt may open another tab, and the AI eventually sees only the extension tab. 
+GitHub
+
+“If I ask AI again to close it, it connects and opens a new tab with the extension url… It then only sees that tab, and not any other opened tabs, so there is no way to close it. … it would forever accumulate tabs on chrome until I run out of memory.” 
+GitHub
+
+That’s basically the “empty tab loop” in another person’s words.
+
+2.2. Misuse of tab tools (blank tabs by design)
+The Playwright MCP tools are designed such that:
+
+browser_tab_new without a URL opens a new tab at about:blank / blank page. 
+OpenTools
+
+Then you’re supposed to call browser_navigate on that tab.
+
+If Claude:
+
+repeatedly calls browser_tab_new with no URL, or
+
+encounters errors when calling browser_navigate (wrong port, app not running, host restricted by --allowed-hosts),
+
+and then “tries again” by opening yet another tab each time,
+
+you end up with a growing stack of blank tabs and no useful page.
+
+This misuse is explicitly mentioned as a common problem in the Claude Code issue about Playwright MCP being flaky—people discovered from CLAUDE.md that you must open a tab correctly first. 
+GitHub
++1
+
+2.3. Extension-mode quirks and connection bugs
+The --extension mode, which attaches to an existing Chrome via the “Playwright MCP Bridge” extension, is still evolving. There are issues where:
+
+The extension can’t connect properly, shows blank connect.html / status.html, or never logs anything. 
+GitHub
++1
+
+When it does connect, the extension tab may be the primary tab Playwright sees, not your app.
+
+If Claude tries to:
+
+close the page with browser_close / page.close, but that only closes the automation session, not the underlying Chrome tab,
+
+and then reconnects, the extension may open another connect.html tab.
+
+That explains multiple windows showing “the same set of tabs” and a growing forest of useless tabs.
+
+2.4. Multiple windows / profiles + Chrome’s own tab restore
+Separate but related: Playwright opening browsers in persistent profile mode or attaching to your main profile can interact badly with Chrome’s own behavior:
+
+Chrome can restore previous tabs on startup.
+
+If Playwright reuses that profile, you see “new” windows that share all your old tabs.
+
+When processes are killed or restarted partway, Chrome’s “session restore” can make it look like the same set of tabs is appearing everywhere.
+
+The Playwright MCP docs explicitly warn that persistent profiles are stored under a Playwright-specific user-data-dir by default, and can be overridden with --user-data-dir. 
+GitHub
+
+So if you’re not isolating that, it might be overlapping with or confusingly similar to your main Chrome.
+
+3. How to avoid getting into this state
+3.1. Prefer a dedicated Playwright browser (no extension) for AI agents
+If you don’t need your personal logged-in session, the simplest, cleanest setup is:
+
+Do not use --extension at all.
+
+Let Playwright MCP manage its own Chromium or Chrome with a separate user-data-dir.
+
+For Claude Code, update your MCP config to something like:
+
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--browser=chromium",
+        "--isolated",
+        "--headless"
+      ]
+    }
+  }
+}
+Key points: 
+GitHub
++1
+
+--browser=chromium → uses Playwright’s bundled Chromium, fully separate from your normal Chrome.
+
+--isolated → each session uses an in-memory profile; when the browser closes, all tabs vanish and nothing persists. 
+GitHub
+
+--headless → no visible windows, so no accidental interference with your day-to-day browsing.
+
+Pros
+
+No risk to your normal Chrome tabs.
+
+No extension bugs, no connect.html weirdness.
+
+Sessions are deterministic and clean.
+
+Cons
+
+You can’t piggy-back on your existing logged-in web sessions.
+
+If you need complex login flows, you’ll need to script them from the AI or provide a storage-state file.
+
+For most dev/test UIs (localhost apps), this is the least painful route.
+
+3.2. If you must use the MCP Bridge extension, isolate it hard
+If you do need your personal logins, use a dedicated Chrome profile just for Playwright MCP and clearly separate it from your day-to-day:
+
+Create a folder for the test profile, e.g.:
+
+mkdir -p ~/.chrome-playwright-mcp
+Start a dedicated Chrome instance with that user-data-dir:
+
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --user-data-dir="$HOME/.chrome-playwright-mcp" \
+  --new-window
+Install the Playwright MCP Bridge extension only in that profile. 
+GitHub
++1
+
+Start Playwright MCP with --extension and the same profile, e.g. in your MCP config:
+
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--extension",
+        "--browser=chrome",
+        "--user-data-dir=/Users/you/.chrome-playwright-mcp"
+      ]
+    }
+  }
+}
+Never use that Chrome window for normal browsing; treat it as “disposable test Chrome”.
+
+Benefit:
+Now you can safely kill that Chrome instance (or its profile directory) without touching your real tabs.
+
+3.3. Make Claude’s tab usage explicit and minimal
+From the docs + issues, the correct pattern for tab usage is: 
+GitHub
++2
+OpenTools
++2
+
+browser_tab_new with a URL, or browser_navigate on an existing tab.
+
+Use browser_tab_list to confirm the tab you want exists.
+
+Interact (browser_click, browser_type, etc.).
+
+Optionally browser_close only at end of a scenario – and even then, extension-mode has known problems.
+
+You can nudge Claude into this by:
+
+Adding explicit rules to CLAUDE.md (I’ll give you some text below).
+
+Discouraging it from repeatedly calling browser_tab_new with no URL or using browser_close aggressively.
+
+4. Recovery playbook when the “blank-tab loop” starts
+Goal: recover the workflow without killing your real Chrome profile.
+
+4.1. If you’re using the “isolated Chromium” setup
+Good news: any mess is fully contained:
+
+Quit the current Claude Code CLI session.
+
+Kill the Playwright MCP process if it’s still running (Claude usually shuts it down when the session ends).
+
+Start a fresh Claude Code session; @playwright/mcp will spin up a new isolated browser.
+
+Because the profile is in-memory (--isolated) and not your main Chrome, there are no lingering tabs to worry about.
+
+4.2. If you’re using the extension + dedicated profile
+Use a targeted kill on the test Chrome instance only:
+
+Close your main Chrome windows for safety or ensure they’re using a different --user-data-dir.
+
+In a terminal, find the PID of the test Chrome process, e.g.:
+
+ps aux | grep chrome-playwright-mcp
+Kill only those processes:
+
+pkill -f chrome-playwright-mcp
+Restart the test Chrome (with --user-data-dir=~/.chrome-playwright-mcp) and restart the @playwright/mcp server (Claude will usually do this automatically on next tool call).
+
+Your day-to-day Chrome profile (no custom data dir) stays intact.
+
+4.3. When Claude is already “stuck” inside the loop
+When you see it repeatedly getting:
+
+blank snapshots, or
+
+only the extension tab URL like
+chrome-extension://.../connect.html, 
+GitHub
++1
+
+you can:
+
+Tell Claude explicitly:
+
+“Stop using Playwright for now. Do not call any browser_* MCP tools until I say otherwise.”
+
+Have it run a reset command via Bash (if Bash is allowed):
+
+# Option A: for isolated Chromium (usually not necessary)
+pkill -f "@playwright/mcp"
+
+# Option B: for extension mode with dedicated profile
+pkill -f chrome-playwright-mcp
+pkill -f "@playwright/mcp"
+Start a new Claude Code conversation or re-enable Playwright only after confirming the new browser instance is clean.
+
+You can automate this by giving Claude rules (next section) like:
+
+“If 3 consecutive Playwright calls fail or show only extension/blank tabs, stop and ask me before trying again.”
+
+5. Concrete instructions you can give to Claude Code
+You can drop something like this into your project’s CLAUDE.md or as an initial instruction in a Claude Code session.
+
+Feel free to tweak wording, but the structure is what matters.
+
+Suggested CLAUDE.md section: “Playwright MCP usage rules”
+## Browser testing & Playwright MCP usage
+
+We use the `@playwright/mcp` MCP server for browser automation. Follow these rules:
+
+1. **When to use Playwright**
+   - Only use Playwright MCP when I explicitly ask you to interact with the browser, e.g. “use Playwright to open the app and take a screenshot”.
+   - Otherwise prefer curl/HTTP-level tools.
+
+2. **How to open pages**
+   - Always open a tab WITH a URL in a single step:
+     - Prefer `browser_tab_new` with `url` set to the target (e.g. `http://localhost:3000`), or
+     - If a tab already exists, use `browser_navigate` on that tab.
+   - Do NOT repeatedly call `browser_tab_new` without a URL—this creates useless blank tabs.
+
+3. **Tab management**
+   - Use `browser_tab_list` to see which tabs exist and which one is current.
+   - If `browser_tab_list` shows only:
+     - a blank tab, or
+     - an extension URL like `chrome-extension://.../connect.html` or `.../status.html`,
+     then:
+       - Do NOT try to interact with that tab.
+       - Instead, open a new tab to the actual app URL using `browser_tab_new` with the URL set.
+
+4. **Closing tabs**
+   - Avoid calling `browser_close` or `page.close` unless you are completely done with the session.
+   - Do NOT loop on `browser_close`. If it fails to close the tab, stop and report the situation instead of retrying indefinitely.
+
+5. **Error handling & recovery**
+   - If you see any of these:
+     - “No open pages available”
+     - repeated errors when calling `browser_tab_new` or `browser_navigate`
+     - only extension/blank tabs in `browser_tab_list`
+   - Then:
+     1. Stop calling Playwright MCP tools.
+     2. Explain the problem to me, including the last tool calls and their errors.
+     3. Suggest that I run a “Playwright reset” script outside of you before trying again.
+
+6. **Retries**
+   - Do not try Playwright MCP more than **3 times in a row** if the same error persists.
+   - After 3 failed attempts, stop and ask me how to proceed.
+
+7. **Local app availability**
+   - Before using Playwright against a localhost app, first verify the app is running:
+     - Use a simple HTTP request or `curl` via Bash.
+     - If the server is not available or responds with an error, ask me to start it instead of continuing to open tabs.
+6. Additional best practices for long-running agent workflows
+A few extra things that improve robustness, especially for daily heavy use like yours:
+
+Pin versions for a while
+Since both Claude Code CLI and @playwright/mcp are moving fast, consider pinning to a known-good version in package.json or via npx @playwright/mcp@0.x.y so your workflow doesn’t break unexpectedly on upgrade. 
+GitHub
+
+Use --isolated for long sessions
+Isolated mode reduces cross-test state pollution and automatically kills tabs when the session ends. Great for “open app, test, close” loops. 
+GitHub
+
+Limit allowed hosts
+Use --allowed-hosts so the agent doesn’t wander to unexpected places (less chance it ends up on some blank or blocked URL). 
+GitHub
+
+Add a manual “reset Playwright” command to the repo
+For example, a script scripts/reset-playwright.sh that kills the MCP server and the dedicated test Chrome. Give Claude permission to suggest running it (but you run it yourself).
+
+# scripts/reset-playwright.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Kill Playwright MCP server
+pkill -f "@playwright/mcp" || true
+
+# Kill dedicated Chrome profile, if used
+pkill -f "chrome-playwright-mcp" || true
+
+echo "Playwright MCP and test Chrome reset."
+Keep an eye on the GitHub issues
+The exact behavior you’re seeing (tabs accumulating, extension tab dominating, flaky connections) is actively being discussed in the Playwright MCP and Claude Code repos. When they land a fix for the tab/extension behavior, you can relax some of this discipline. 
+GitHub
++1
+
+If you’d like, next step we can:
+
+Design a specific scripts/ + MCP config for your machine (macOS, your ports, your UI app), and
+
+Draft a “Playwright debugging checklist” that Claude can follow whenever it gets confused (e.g., verify server, list tabs, snapshot, then proceed).
+
+You said:
+How do I find my MCP config file?  Where is it and what is it called?
+ChatGPT said:
+
+Thought for 37s
+Good question to pin down, because there are multiple possible config files and it’s confusing until you see the hierarchy.
+
+You’re on macOS and using Claude Code (CLI), so I’ll focus on that, and then briefly mention the Desktop file in case you use it too.
+
+1. What “MCP config” means in Claude Code
+Claude Code can load MCP servers from several places, in this priority order (most specific → most global): 
+Stack Overflow
++3
+ClaudeLog
++3
+ClaudeLog
++3
+
+Project-scoped files (in your repo)
+
+User-local / user-global config (~/.claude*)
+
+Enterprise/managed configs (if your org uses them)
+
+(Optionally) Claude Desktop’s config file
+
+So there usually isn’t one MCP config file – there’s a hierarchy. But you can absolutely decide on “the” main place you want to edit.
+
+2. Likely config file locations on your machine
+A. Project-scoped (repo-local) MCP config
+These live in your project directory and are great for MCPs that should travel with the repo:
+
+.mcp.json in the project root
+
+Created when you run:
+
+claude mcp add my-server --scope project -- ...
+Claude Code writes a server definition into <project>/.mcp.json. 
+Skywork
++3
+GitHub
++3
+Stack Overflow
++3
+
+.claude/.mcp.json (variant some guides use)
+
+Some docs describe project-scoped MCPs via .claude/.mcp.json; Claude Code supports that pattern as well. 
+Zitnik Lab
++1
+
+How to check in a repo:
+
+From your project root:
+
+ls .mcp.json .claude/.mcp.json
+If either exists, open it:
+
+cat .mcp.json
+# or
+cat .claude/.mcp.json
+You’ll see a JSON object listing mcpServers.
+
+B. User-level MPC config (global / per-project mapping)
+This is where local or user-scoped claude mcp add calls usually land.
+
+Key files (macOS): 
+Stack Overflow
++3
+ClaudeLog
++3
+ClaudeLog
++3
+
+Main global file (most important for MCPs):
+
+~/.claude.json
+
+This can contain:
+
+global settings
+
+a "projects" map keyed by project paths
+
+and a "mcpServers" section for global or project-local servers
+
+Additional user settings (may or may not exist):
+
+~/.claude/settings.json
+
+~/.claude/settings.local.json
+
+~/.claude/mcp_servers.json (some setups/tools use this as a dedicated MCP file) 
+ClaudeLog
++1
+
+How to inspect user-level MCP config:
+
+cd ~
+ls .claude.json .claude
+
+# If ~/.claude.json exists:
+jq '.projects?, .mcpServers?' ~/.claude.json 2>/dev/null
+
+# If there is a ~/.claude directory:
+ls ~/.claude
+jq '.' ~/.claude/mcp_servers.json 2>/dev/null || true
+jq '.' ~/.claude/settings.json 2>/dev/null || true
+jq '.' ~/.claude/settings.local.json 2>/dev/null || true
+You’re looking for keys like "mcpServers" or "servers" that describe MCP server definitions. 
+ClaudeLog
++1
+
+In practice, ~/.claude.json is the most common place Claude Code stores/reads MCP config when you use claude mcp add --scope local or --scope user. 
+Stack Overflow
++1
+
+C. Claude Desktop MCP config (if you also use the desktop app)
+Claude Desktop (the GUI app) keeps its own config here (macOS): 
+MCPcat
++4
+Model Context Protocol
++4
+Weavely
++4
+
+~/Library/Application Support/Claude/claude_desktop_config.json
+
+Claude Code can import MCP servers from this file (claude mcp import-desktop / related features, see Anthropic docs), but the CLI itself doesn’t primarily live there.
+
+If you want to look:
+
+cat ~/Library/Application\ Support/Claude/claude_desktop_config.json
+You’ll see a "mcpServers" object similar to the CLI config.
+
+3. Quick way to discover “which config is active”
+From a project where you use MCPs:
+
+List servers:
+
+claude mcp list
+That tells you which MCPs Claude Code thinks exist. 
+Claude Code
++1
+
+Add a dummy test server to see where it writes:
+
+For example (don’t worry, we’ll remove it):
+
+# From inside your project directory
+claude mcp add helloworld --scope project -- echo "hello mcp"
+Output typically includes something like:
+
+File modified: /path/to/project/.mcp.json or
+File modified: /Users/mike/.claude.json [project: /path/to/project] 
+Stack Overflow
++1
+
+That log line tells you exactly which config file Claude Code thinks is authoritative for that scope.
+
+Inspect and then clean up:
+
+# look at the file that was modified
+cat /path/from/above
+
+# then remove the dummy server
+claude mcp remove helloworld
+4. What I’d recommend you use as “the” MCP config
+Given your usage (daily CLI work, multiple projects, MCP/Playwright), a clean approach is:
+
+Global default:
+Use ~/.claude.json for MCPs you want available everywhere (--scope user or --scope local). 
+ClaudeLog
++1
+
+Project-specific setup (version-controlled):
+Use .mcp.json in each repo for project-scoped servers that your future self (or others) should get automatically when cloning. 
+GitHub
++2
+Skywork
++2
+
+That gives you:
+
+One main file you know to edit for “my global MCP stack”: ~/.claude.json.
+
+Per-project .mcp.json for reproducible setups that you can put under git.
+
+5. Short answer you can keep handy
+If you want a TL;DR you can paste into your notes:
+
+CLI (Claude Code) MCP config on macOS:
+
+Global/user config is usually in ~/.claude.json (sometimes with MCP-specific bits in ~/.claude/mcp_servers.json or ~/.claude/settings*.json).
+
+Project-scoped MCPs live in .mcp.json or .claude/.mcp.json in the project root.
+
+claude mcp add ... will tell you which file it wrote (look for “File modified:” in the output).
+
+Claude Desktop, if used, keeps MCPs in ~/Library/Application Support/Claude/claude_desktop_config.json.
+
+If you tell me which file(s) you actually find on your machine, I can help you normalize them into a single clean structure (e.g., move everything into ~/.claude.json + .mcp.json per project).
+
+
+
+
+No file chosenNo file chosen
+ChatGPT can make mistakes. Check important info.
+

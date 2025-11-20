@@ -48,6 +48,12 @@ pub struct Layer {
     pub bias: Array1<f32>,
     /// Activation function
     pub activation: ActivationType,
+    /// Cached input from forward pass (for backprop)
+    #[serde(skip)]
+    cached_input: Option<Array2<f32>>,
+    /// Cached pre-activation values (for backprop)
+    #[serde(skip)]
+    cached_linear: Option<Array2<f32>>,
 }
 
 impl Layer {
@@ -62,11 +68,13 @@ impl Layer {
             weights,
             bias,
             activation,
+            cached_input: None,
+            cached_linear: None,
         }
     }
 
     /// Forward pass through the layer
-    pub fn forward(&self, input: &Array2<f32>) -> Array2<f32> {
+    pub fn forward(&mut self, input: &Array2<f32>) -> Array2<f32> {
         // input shape: (batch_size, input_dim)
         // weights shape: (output_dim, input_dim)
         // output shape: (batch_size, output_dim)
@@ -74,8 +82,51 @@ impl Layer {
         // Linear transformation: input @ weights.T + bias
         let linear = input.dot(&self.weights.t()) + &self.bias;
 
+        // Cache values for backward pass
+        self.cached_input = Some(input.clone());
+        self.cached_linear = Some(linear.clone());
+
         // Apply activation
         self.activation.apply(&linear)
+    }
+
+    /// Backward pass through the layer
+    /// Returns gradient with respect to input
+    pub fn backward(&self, grad_output: &Array2<f32>) -> (Array2<f32>, Array2<f32>, Array1<f32>) {
+        let input = self
+            .cached_input
+            .as_ref()
+            .expect("Forward must be called before backward");
+        let linear = self
+            .cached_linear
+            .as_ref()
+            .expect("Forward must be called before backward");
+
+        // Gradient through activation
+        let activation_grad = self.activation.derivative(linear);
+        let grad_linear = grad_output * &activation_grad;
+
+        // Gradient with respect to weights: grad_linear.T @ input
+        let grad_weights = grad_linear.t().dot(input);
+
+        // Gradient with respect to bias: sum over batch dimension
+        let grad_bias = grad_linear.sum_axis(ndarray::Axis(0));
+
+        // Gradient with respect to input: grad_linear @ weights
+        let grad_input = grad_linear.dot(&self.weights);
+
+        (grad_input, grad_weights, grad_bias)
+    }
+
+    /// Update weights and biases using gradients
+    pub fn update(
+        &mut self,
+        grad_weights: &Array2<f32>,
+        grad_bias: &Array1<f32>,
+        learning_rate: f32,
+    ) {
+        self.weights = &self.weights - &(grad_weights * learning_rate);
+        self.bias = &self.bias - &(grad_bias * learning_rate);
     }
 }
 
@@ -93,12 +144,31 @@ impl Network {
     }
 
     /// Forward pass through all layers
-    pub fn forward(&self, input: &Array2<f32>) -> Array2<f32> {
+    pub fn forward(&mut self, input: &Array2<f32>) -> Array2<f32> {
         let mut x = input.clone();
-        for layer in &self.layers {
+        for layer in &mut self.layers {
             x = layer.forward(&x);
         }
         x
+    }
+
+    /// Backward pass and update weights
+    pub fn backward_and_update(&mut self, grad_output: &Array2<f32>, learning_rate: f32) {
+        let mut grad = grad_output.clone();
+        let mut gradients = Vec::new();
+
+        // First pass: compute all gradients
+        for layer in self.layers.iter().rev() {
+            let (grad_input, grad_weights, grad_bias) = layer.backward(&grad);
+            gradients.push((grad_weights, grad_bias));
+            grad = grad_input;
+        }
+
+        // Second pass: update weights (in forward order)
+        gradients.reverse();
+        for (layer, (grad_weights, grad_bias)) in self.layers.iter_mut().zip(gradients.iter()) {
+            layer.update(grad_weights, grad_bias, learning_rate);
+        }
     }
 
     /// Get total number of parameters
@@ -157,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_layer_forward_shape() {
-        let layer = Layer::new(3, 2, ActivationType::ReLU);
+        let mut layer = Layer::new(3, 2, ActivationType::ReLU);
         let input = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // batch_size=2, input_dim=3
         let output = layer.forward(&input);
         assert_eq!(output.shape(), &[2, 2]); // batch_size=2, output_dim=2
@@ -191,7 +261,7 @@ mod tests {
     fn test_network_forward() {
         let layer1 = Layer::new(3, 4, ActivationType::ReLU);
         let layer2 = Layer::new(4, 2, ActivationType::Identity);
-        let network = Network::new(vec![layer1, layer2]);
+        let mut network = Network::new(vec![layer1, layer2]);
 
         let input = array![[1.0, 2.0, 3.0]];
         let output = network.forward(&input);
